@@ -1,1 +1,125 @@
+# src/services/regulatory_reporter.py
+import datetime
+import os
+import csv
+import json # Se algum CADOC for JSON ou XML
 
+# Assumindo que Transacao está em src/models/transaction.py
+from src.models.transaction import Transacao
+# Assumindo que Chargeback está em src/models/chargeback.py
+from src.models.chargeback import Chargeback
+
+class RegulatoryReporter:
+    def __init__(self, output_dir="data/output/", log_callback=None):
+        self.output_dir = output_dir
+        self.log_callback = log_callback
+
+    def _log(self, message, color_tag="black"):
+        if self.log_callback:
+            self.log_callback(message, color_tag)
+        else:
+            print(message)
+
+    def generate_cadoc_3040_scr(self, entities_data, reference_month_year):
+        """
+        Gera um arquivo XML simulado para o CADOC 3040 (SCR - Sistema de Informações de Crédito).
+        Este é um relatório mensal de operações de crédito para o BCB.
+        """
+        filename = os.path.join(self.output_dir, f"REG_EMISSOR_CADOC_3040_SCR_{reference_month_year}.xml")
+        
+        xml_content = ['<SCR_Report xmlns="http://www.bcb.gov.br/scr/3040">\n']
+        xml_content.append(f'  <Header DataRef="{reference_month_year}-01" Geracao="{datetime.datetime.now().isoformat()}" />\n')
+        xml_content.append('  <OperacoesDeCredito>\n')
+
+        # Simulando dados de transações (cartão de crédito gera "obrigação a pagar")
+        for entity_name, data_list in entities_data.items():
+            for item in data_list:
+                if isinstance(item, Transacao) and item.status in ["APROVADA_EMISSOR", "LIQUIDADA_EMISSOR"]:
+                    xml_content.append(f'    <Operacao id="{item.id}">\n')
+                    xml_content.append(f'      <TipoOperacao>CartaoCredito</TipoOperacao>\n')
+                    xml_content.append(f'      <CpfCnpjPortador>{item.id_portador}</CpfCnpjPortador>\n') # Simplificado para ID
+                    xml_content.append(f'      <ValorOriginal>{item.valor:.2f}</ValorOriginal>\n')
+                    xml_content.append(f'      <SaldoDevedor>{item.valor:.2f}</SaldoDevedor>\n') # Simplificado, em real seria diferente
+                    xml_content.append(f'      <DataContratacao>{item.data_hora.strftime("%Y-%m-%d")}</DataContratacao>\n')
+                    xml_content.append(f'    </Operacao>\n')
+                elif isinstance(item, Chargeback):
+                     # Chargebacks também podem gerar obrigações ou ajustes de crédito reportáveis
+                    xml_content.append(f'    <Operacao id="CB_{item.id}">\n')
+                    xml_content.append(f'      <TipoOperacao>AjusteChargeback</TipoOperacao>\n')
+                    xml_content.append(f'      <CpfCnpjPortador>{item.transacao_original_id}</CpfCnpjPortador>\n') # Associar ao portador original
+                    xml_content.append(f'      <ValorOriginal>{item.valor:.2f}</ValorOriginal>\n')
+                    xml_content.append(f'      <StatusChargeback>{item.status}</StatusChargeback>\n')
+                    xml_content.append(f'      <DataSolicitacao>{item.data_solicitacao.strftime("%Y-%m-%d")}</DataSolicitacao>\n')
+                    xml_content.append(f'    </Operacao>\n')
+
+        xml_content.append('  </OperacoesDeCredito>\n')
+        xml_content.append('</SCR_Report>\n')
+
+        with open(filename, 'w') as f:
+            f.writelines(xml_content)
+        self._log(f"[BCB]: Gerado CADOC 3040 (SCR) em {filename}", "red")
+        return filename
+
+    def generate_cadoc_5817_credenciadoras(self, adquirente_data, reference_month_year):
+        """
+        Gera um arquivo CSV simulado para o CADOC 5817 (Credenciadoras).
+        Relatório mensal de informações operacionais e estatísticas de credenciadoras.
+        """
+        filename = os.path.join(self.output_dir, f"REG_ADQUIRENTE_CADOC_5817_CREDENCIADORAS_{reference_month_year}.csv")
+        
+        headers = ["DataReferencia", "Entidade", "TipoTransacao", "VolumeTransacoes", "ValorTotal", "NumEstabelecimentos"]
+        data_rows = []
+
+        # Simula agregação de dados da adquirente
+        total_aprovadas = sum(1 for t in adquirente_data["transacoes_capturadas"] if t.status == "APROVADA_CAPTURA")
+        valor_aprovadas = sum(t.valor for t in adquirente_data["transacoes_capturadas"] if t.status == "APROVADA_CAPTURA")
+        
+        total_negadas = sum(1 for t in adquirente_data["transacoes_negadas"])
+        valor_negadas = sum(t.valor for t in adquirente_data["transacoes_negadas"])
+
+        num_estabelecimentos = len(adquirente_data["estabelecimentos"])
+
+        data_rows.append([reference_month_year, "AdquirenteXPTO", "APROVADA", total_aprovadas, valor_aprovadas, num_estabelecimentos])
+        data_rows.append([reference_month_year, "AdquirenteXPTO", "NEGADA", total_negadas, valor_negadas, num_estabelecimentos])
+        
+        # Adiciona Chargebacks para referência no relatório da adquirente (se aplicável ao 5817)
+        total_chargebacks_adq = sum(1 for cb in adquirente_data["chargebacks_ativos"].values())
+        valor_chargebacks_adq = sum(cb.valor for cb in adquirente_data["chargebacks_ativos"].values())
+        data_rows.append([reference_month_year, "AdquirenteXPTO", "CHARGEBACK_INICIADO", total_chargebacks_adq, valor_chargebacks_adq, num_estabelecimentos])
+
+
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(data_rows)
+        
+        self._log(f"[BCB]: Gerado CADOC 5817 (Credenciadoras) em {filename}", "red")
+        return filename
+
+    # Adicionar funções para outros CADOCs aqui (ex: 6334, 4001, etc.)
+    def generate_cadoc_6334_estatistico(self, all_transactions, reference_month_year):
+        """
+        Gera um CSV simulado para o CADOC 6334 (Informações estatísticas do setor de meios de pagamento).
+        """
+        filename = os.path.join(self.output_dir, f"REG_GERAL_CADOC_6334_ESTATISTICO_{reference_month_year}.csv")
+        
+        headers = ["DataReferencia", "TipoOperacao", "Instituicao", "ModalidadeCartao", "VolumeTransacoes", "ValorTotal"]
+        data_rows = []
+
+        # Agregação geral de transações
+        credito_aprovadas = sum(1 for t in all_transactions if t.tipo_cartao == "CREDITO" and t.status.startswith("APROVADA"))
+        credito_valor = sum(t.valor for t in all_transactions if t.tipo_cartao == "CREDITO" and t.status.startswith("APROVADA"))
+        
+        debito_aprovadas = sum(1 for t in all_transactions if t.tipo_cartao == "DEBITO" and t.status.startswith("APROVADA"))
+        debito_valor = sum(t.valor for t in all_transactions if t.tipo_cartao == "DEBITO" and t.status.startswith("APROVADA"))
+
+        data_rows.append([reference_month_year, "Pagamento", "TODAS", "CREDITO", credito_aprovadas, credito_valor])
+        data_rows.append([reference_month_year, "Pagamento", "TODAS", "DEBITO", debito_aprovadas, debito_valor])
+
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(data_rows)
+        
+        self._log(f"[BCB]: Gerado CADOC 6334 (Estatístico) em {filename}", "red")
+        return filename
