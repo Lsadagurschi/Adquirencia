@@ -4,50 +4,101 @@ import random
 import os
 import json
 import csv
-from colorama import Fore, Style # Importar se for usar cores nos logs
-
-# Assumindo que Transacao está em src/models/transaction.py
 from src.models.transaction import Transacao
+from src.models.chargeback import Chargeback # Novo import
 
-# As classes Bandeira, Adquirente, Emissor, Estabelecimento, Portador vêm aqui.
-# Adapte os print_message e print_file_action para usar logging ou retornar mensagens para o Streamlit
-# em vez de imprimir diretamente no console.
-# Ex: Em vez de print(), você pode ter um método na classe que retorna a string do log.
+# ... classes Estabelecimento, Portador ...
 
-# Exemplo de como a classe Adquirente poderia ser (com adaptações para logs):
-class Estabelecimento:
-    def __init__(self, id_estabelecimento, nome, cnae):
-        self.id = id_estabelecimento
+class Bandeira:
+    def __init__(self, nome, log_callback=None):
         self.nome = nome
-        self.cnae = cnae
+        self.log_callback = log_callback
+        self.transacoes_pendentes_emissor = {}
+        self.arquivos_captura_recebidos = []
+        self.chargebacks_ativos = {} # Para rastrear CBs
 
-class Portador:
-    def __init__(self, id_portador, nome, cpf, tipo_cartao):
-        self.id = id_portador
-        self.nome = nome
-        self.cpf = cpf
-        self.tipo_cartao = tipo_cartao
+    def _log(self, message, color_tag="black"):
+        if self.log_callback:
+            self.log_callback(f"[{self.nome}]: {message}", color_tag)
+        else:
+            print(message)
 
-# Exemplo de adaptação:
+    def rotear_para_emissor(self, transacao):
+        self._log(f"Roteando ISO 8583 (Autorização): TXN {transacao.id}", "yellow")
+        self.transacoes_pendentes_emissor[transacao.id] = transacao
+        return transacao # Em um sistema real, não retornaria a transação completa
+
+    def rotear_resposta_do_emissor(self, transacao):
+        self._log(f"Roteando ISO 8583 (Resposta Autorização): TXN {transacao.id} Status: {transacao.status}", "yellow")
+        return transacao
+
+    def receber_arquivo_captura(self, filename, data): # Adapte para receber o nome do arquivo gerado
+        self._log(f"Recebido Arquivo de Captura: {os.path.basename(filename)}", "lightmagenta")
+
+    # NOVOS MÉTODOS PARA CHARGEBACK
+    def receber_chargeback_emissor(self, chargeback):
+        self._log(f"Recebido solicitação de Chargeback do Emissor: CB ID {chargeback.id}", "yellow")
+        self.chargebacks_ativos[chargeback.id] = chargeback
+        # A Bandeira, em um sistema real, debitaria o adquirente e iniciaria a notificação
+
+    def receber_reapresentacao_adquirente(self, chargeback):
+        self._log(f"Recebida Reapresentação (Documentos de Defesa) da Adquirente para CB: {chargeback.id}", "yellow")
+        chargeback.update_status(Chargeback.STATUS_REAPRESENTADO)
+        # Bandeira avalia a defesa e envia a decisão ao Emissor
+
+# ... Adquirente e Emissor com métodos semelhantes para chargeback ...
 class Adquirente:
     def __init__(self, nome, log_callback=None):
         self.nome = nome
+        self.log_callback = log_callback
         self.transacoes_recebidas = []
         self.transacoes_capturadas = []
         self.estabelecimentos = {}
         self.transacoes_a_liquidar = []
-        self.log_callback = log_callback # Callback para enviar logs para a GUI
+        self.chargebacks_ativos = {} # Para rastrear CBs recebidos
 
-    def _log(self, message, color=None):
+    def _log(self, message, color_tag="black"):
         if self.log_callback:
-            self.log_callback(f"[{self.nome}]: {message}", color)
+            self.log_callback(f"[{self.nome}]: {message}", color_tag)
         else:
-            print(message) # Fallback para console
+            print(message)
 
-    def cadastrar_estabelecimento(self, estabelecimento):
-        self.estabelecimentos[estabelecimento.id] = estabelecimento
-        self._log(f"Estabelecimento {estabelecimento.nome} ({estabelecimento.id}) cadastrado.")
+    # ... métodos existentes ...
 
-    # ... resto da classe Adquirente, Bandeira, Emissor ...
-    # Lembre-se de adaptar os métodos para usar self._log() em vez de print() direto
-    # e para que as funções de geração de arquivos chamem as funções de src/services/file_generator.py
+    # NOVO MÉTODO PARA CHARGEBACK
+    def receber_chargeback_bandeira(self, chargeback):
+        self._log(f"Recebida Notificação de Chargeback da Bandeira: CB ID {chargeback.id} (TXN {chargeback.transacao_original_id})", "blue")
+        self.chargebacks_ativos[chargeback.id] = chargeback
+        # Notificar estabelecimento, solicitar documentos de defesa, etc.
+
+class Emissor:
+    def __init__(self, nome, log_callback=None):
+        self.nome = nome
+        self.log_callback = log_callback
+        self.portadores = {}
+        self.transacoes_aprovadas = []
+        self.transacoes_negadas = []
+        self.transacoes_para_faturar = []
+        self.chargebacks_iniciados = {} # Para rastrear CBs iniciados
+
+    def _log(self, message, color_tag="black"):
+        if self.log_callback:
+            self.log_callback(f"[{self.nome}]: {message}", color_tag)
+        else:
+            print(message)
+
+    # ... métodos existentes ...
+
+    # NOVO MÉTODO PARA CHARGEBACK
+    def receber_solicitacao_chargeback(self, chargeback):
+        self._log(f"Recebida solicitação de Chargeback do Portador para TXN {chargeback.transacao_original_id}", "red")
+        self.chargebacks_iniciados[chargeback.id] = chargeback
+        # Iniciar o processo de disputa, potencialmente estornar o portador (provisoriamente)
+
+    def receber_reapresentacao_bandeira(self, chargeback):
+        self._log(f"Recebida Avaliação da Reapresentação da Bandeira para CB: {chargeback.id}", "red")
+        # Baseado na decisão da bandeira, re-cobrar o portador ou confirmar o estorno.
+        if chargeback.status == Chargeback.STATUS_RESOLVIDO_FAVOR_ESTABELECIMENTO:
+            self._log(f"Chargeback {chargeback.id} resolvido a favor do Estabelecimento. Pode ser necessário re-cobrar o portador.", "green")
+        elif chargeback.status == Chargeback.STATUS_RESOLVIDO_FAVOR_PORTADOR:
+            self._log(f"Chargeback {chargeback.id} resolvido a favor do Portador. Estorno confirmado.", "red")
