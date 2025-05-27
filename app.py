@@ -59,15 +59,12 @@ def streamlit_log_callback(message, color_tag="black"):
 
 # --- Função para Rodar a Simulação em uma Thread Separada ---
 def run_simulation_in_thread_target(log_callback, output_dir_path):
-    # Esta função será o alvo da thread. Ela NÃO deve chamar st.experimental_rerun()
-    # ou qualquer outra função de manipulação de UI do Streamlit diretamente.
     try:
         simulator = PaymentSimulator(output_dir=output_dir_path, log_callback=log_callback)
         simulator.run_full_simulation()
     except Exception as e:
         log_callback(f"ERRO NA SIMULAÇÃO: {e}", "red")
     finally:
-        # Sinaliza que a thread terminou. A thread principal do Streamlit reagirá a isso.
         st.session_state.thread_finished = True
 
 
@@ -77,15 +74,16 @@ def run_simulation_in_thread_target(log_callback, output_dir_path):
 if st.session_state.simulation_running:
     status_placeholder.info("Simulação em andamento...")
     # Exibe o log continuamente enquanto a simulação está rodando
-    log_placeholder.markdown(st.session_state.log_content, unsafe_allow_html=True)
+    # Não precisa de uma chamada explícita para o log_placeholder aqui,
+    # pois o callback já está fazendo isso.
+    # O Streamlit irá re-renderizar o log_placeholder quando o session_state.log_content mudar.
 
     # Se a thread terminou, atualiza o status final e permite o botão novamente
     if st.session_state.thread_finished:
         status_placeholder.success("Simulação concluída! Verifique a pasta `data/output/` para os arquivos gerados.")
         st.session_state.simulation_running = False
         st.session_state.thread_finished = False # Resetar para a próxima rodada
-        # Não precisa de rerun aqui, pois o Streamlit já está no loop principal de renderização
-        # e a mudança de st.session_state.simulation_running fará com que o botão seja habilitado.
+        # Não precisa de rerun aqui. As mudanças de session_state farão o Streamlit re-renderizar.
 
 # Botão Iniciar/Reiniciar Simulação
 if st.button("Iniciar Simulação", disabled=st.session_state.simulation_running):
@@ -97,16 +95,15 @@ if st.button("Iniciar Simulação", disabled=st.session_state.simulation_running
     status_placeholder.empty() # Limpa o status visível
     
     # Inicia a função de simulação em uma nova thread.
-    # Passamos o callback e o diretório de output para a thread.
     thread = threading.Thread(target=run_simulation_in_thread_target, args=(streamlit_log_callback, output_dir))
     thread.start()
     
-    # Force um rerun APENAS AQUI para que o botão seja desabilitado imediatamente
-    # e a mensagem "Simulação em andamento..." apareça.
-    st.experimental_rerun() 
+    # REMOVIDA: st.experimental_rerun() AQUI.
+    # A simples alteração de st.session_state.simulation_running = True
+    # já é suficiente para que o Streamlit, no próximo ciclo de renderização,
+    # desabilite o botão.
 
 # Exibe o log atualizado (para quando a simulação não está rodando ativamente, mas o log precisa ser visto)
-# Este markdown está fora das condições para garantir que o log seja sempre visível.
 log_placeholder.markdown(st.session_state.log_content, unsafe_allow_html=True)
 
 
