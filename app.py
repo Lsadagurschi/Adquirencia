@@ -13,6 +13,14 @@ output_dir = "data/output"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
+# Configurações de logging inicial para o console
+# (útil para depurar o próprio Streamlit)
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+logger.info("app.py: Script iniciado.")
+
 st.set_page_config(
     page_title="Simulador de Fluxo de Pagamentos",
     page_icon="💳",
@@ -26,14 +34,15 @@ st.write("Este aplicativo simula o complexo fluxo de transações financeiras, i
 # --- Inicialização do Estado da Sessão do Streamlit ---
 if 'log_messages' not in st.session_state:
     st.session_state.log_messages = ["Clique em 'Iniciar Simulação' para começar..."]
+    logger.info("app.py: st.session_state.log_messages inicializado.")
 if 'simulation_running' not in st.session_state:
     st.session_state.simulation_running = False
+    logger.info("app.py: st.session_state.simulation_running inicializado.")
 if 'thread_finished' not in st.session_state:
     st.session_state.thread_finished = False
+    logger.info("app.py: st.session_state.thread_finished inicializado.")
 
 # --- Placeholders para Atualizações Dinâmicas na UI ---
-# Estes placeholders devem ser criados no início do script Streamlit
-# para que existam durante todo o ciclo de vida da aplicação.
 status_placeholder = st.empty()
 log_placeholder = st.empty()
 
@@ -51,72 +60,66 @@ def streamlit_log_callback(message, color_tag="black"):
     }
     html_color = color_map.get(color_tag, "black")
     st.session_state.log_messages.append(f"<span style='color: {html_color};'>{message}</span>")
-
+    logger.debug(f"app.py: Adicionado log: {message}") # Debug para logs adicionados
 
 # --- Função para Rodar a Simulação em uma Thread Separada ---
 def run_simulation_in_thread_target(log_callback, output_dir_path):
+    logger.info("app.py: Thread de simulação iniciada.")
     try:
         simulator = PaymentSimulator(output_dir=output_dir_path, log_callback=log_callback)
         simulator.run_full_simulation()
     except Exception as e:
-        log_callback(f"ERRO NA SIMULAÇÃO: {e}", "red")
+        log_callback(f"ERRO CRÍTICO NA SIMULAÇÃO (THREAD): {e}", "red")
+        logger.error(f"app.py: Erro na thread de simulação: {e}", exc_info=True)
     finally:
-        # Importante: A thread secundária APENAS modifica o session_state.
-        # Ela NÃO deve tentar interagir diretamente com a UI ou forçar reruns.
         st.session_state.thread_finished = True
+        logger.info("app.py: st.session_state.thread_finished definido como True.")
 
 
 # --- Lógica Principal do Streamlit App ---
+logger.info(f"app.py: Início da lógica principal. simulation_running: {st.session_state.simulation_running}")
 
 # Botão Iniciar/Reiniciar Simulação
 if st.button("Iniciar Simulação", disabled=st.session_state.simulation_running):
+    logger.info("app.py: Botão 'Iniciar Simulação' clicado.")
     st.session_state.simulation_running = True
     st.session_state.log_messages = [] # Limpa o log ao iniciar
     st.session_state.thread_finished = False # Reseta o flag da thread
     
-    # Limpa os placeholders visíveis para iniciar uma nova simulação
     log_placeholder.empty()
     status_placeholder.empty()
     
-    # Inicia a função de simulação em uma nova thread.
     thread = threading.Thread(target=run_simulation_in_thread_target, args=(streamlit_log_callback, output_dir))
     thread.start()
-    
-    # --- REMOVIDA AQUI: st.experimental_rerun() ---
-    # O Streamlit irá re-executar o script no próximo ciclo de renderização
-    # devido à alteração de st.session_state.simulation_running.
+    logger.info("app.py: Thread de simulação disparada.")
 
 # --- Loop de Atualização de Logs na Thread Principal ---
-# Este loop só é executado se a simulação estiver rodando.
 if st.session_state.simulation_running:
-    # A mensagem de status deve ser exibida imediatamente
+    logger.info("app.py: Entrando no loop de atualização de logs.")
     status_placeholder.info("Simulação em andamento...")
     
-    while not st.session_state.thread_finished: # Loop enquanto a thread não terminou
-        # Converte a lista de mensagens em uma única string HTML para exibir.
+    while not st.session_state.thread_finished:
         current_log_content = "<br>".join(st.session_state.log_messages)
         log_placeholder.markdown(current_log_content, unsafe_allow_html=True)
         
-        # Pequena pausa para evitar sobrecarga de CPU e permitir que o Streamlit
-        # atualize a interface. Ajuste este valor se necessário.
         time.sleep(0.1) # Pausa de 100ms
+        logger.debug("app.py: Loop de atualização de logs (sleep).") # Debug para loop ativo
 
+    logger.info("app.py: Saindo do loop de atualização de logs.")
     # Quando a thread_finished for True, a simulação terminou.
-    # Exibe o log final para garantir que todas as mensagens sejam mostradas.
     final_log_content = "<br>".join(st.session_state.log_messages)
     log_placeholder.markdown(final_log_content, unsafe_allow_html=True)
     
-    # Atualiza o status final e permite que o botão seja clicado novamente.
     status_placeholder.success("Simulação concluída! Verifique a pasta `data/output/` para os arquivos gerados.")
     st.session_state.simulation_running = False
     st.session_state.thread_finished = False # Resetar para a próxima execução
+    logger.info("app.py: Simulação concluída e estado resetado.")
 
 # --- Exibir o log inicial/final quando a simulação não está rodando ---
-# Garante que o log esteja visível mesmo antes ou depois da simulação
-# e que a mensagem "Clique para iniciar..." apareça.
 else:
     initial_log_content = "<br>".join(st.session_state.log_messages)
     log_placeholder.markdown(initial_log_content, unsafe_allow_html=True)
+    logger.info("app.py: Exibindo log inicial/final.")
 
 
 # --- Barra Lateral com Informações Adicionais ---
@@ -128,3 +131,4 @@ st.sidebar.markdown("""
     Simula um ecossistema de pagamentos para ilustrar a interação
     entre Estabelecimentos, Portadores, Adquirentes, Bandeiras, Emissores e o Banco Central.
     """)
+logger.info("app.py: Script finalizado (renderização do Streamlit).")
