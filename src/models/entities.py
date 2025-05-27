@@ -1,104 +1,106 @@
-# src/models/entities.py
-import datetime
-import random
+import streamlit as st
+import time
+import threading
 import os
-import json
-import csv
-from src.models.transaction import Transacao
-from src.models.chargeback import Chargeback # Novo import
+import datetime # Para formatar datas no log
 
-# ... classes Estabelecimento, Portador ...
+# Importa as classes e serviços de dentro do seu pacote src
+from src.services.simulation import PaymentSimulator
 
-class Bandeira:
-    def __init__(self, nome, log_callback=None):
-        self.nome = nome
-        self.log_callback = log_callback
-        self.transacoes_pendentes_emissor = {}
-        self.arquivos_captura_recebidos = []
-        self.chargebacks_ativos = {} # Para rastrear CBs
+# --- Configurações Iniciais ---
+output_dir = "data/output"
+# Garante que a pasta de output exista ao iniciar o app
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
-    def _log(self, message, color_tag="black"):
-        if self.log_callback:
-            self.log_callback(f"[{self.nome}]: {message}", color_tag)
-        else:
-            print(message)
+st.set_page_config(
+    page_title="Simulador de Fluxo de Pagamentos",
+    page_icon="💳",
+    layout="wide"
+)
 
-    def rotear_para_emissor(self, transacao):
-        self._log(f"Roteando ISO 8583 (Autorização): TXN {transacao.id}", "yellow")
-        self.transacoes_pendentes_emissor[transacao.id] = transacao
-        return transacao # Em um sistema real, não retornaria a transação completa
+# --- Título e Descrição da Aplicação ---
+st.title("💳 Simulador de Fluxo de Pagamentos Detalhado")
+st.write("Este aplicativo simula o complexo fluxo de transações financeiras, incluindo **autorização**, **captura**, **liquidação**, **faturamento**, **pagamento ao lojista**, **relatórios regulatórios** e, agora, o intrincado processo de **chargeback**.")
 
-    def rotear_resposta_do_emissor(self, transacao):
-        self._log(f"Roteando ISO 8583 (Resposta Autorização): TXN {transacao.id} Status: {transacao.status}", "yellow")
-        return transacao
+# --- Inicialização do Estado da Sessão do Streamlit ---
+# O Streamlit re-executa o script a cada interação, então st.session_state é crucial
+# para manter o estado entre as execuções.
+if 'log_content' not in st.session_state:
+    st.session_state.log_content = "Clique em 'Iniciar Simulação' para começar..."
+if 'simulation_running' not in st.session_state:
+    st.session_state.simulation_running = False
 
-    def receber_arquivo_captura(self, filename, data): # Adapte para receber o nome do arquivo gerado
-        self._log(f"Recebido Arquivo de Captura: {os.path.basename(filename)}", "lightmagenta")
+# --- Placeholders para Atualizações Dinâmicas na UI ---
+# Usamos st.empty() para criar "slots" onde podemos atualizar o conteúdo
+# sem re-renderizar todo o aplicativo, o que é útil para logs em tempo real.
+status_placeholder = st.empty()
+log_placeholder = st.empty()
 
-    # NOVOS MÉTODOS PARA CHARGEBACK
-    def receber_chargeback_emissor(self, chargeback):
-        self._log(f"Recebido solicitação de Chargeback do Emissor: CB ID {chargeback.id}", "yellow")
-        self.chargebacks_ativos[chargeback.id] = chargeback
-        # A Bandeira, em um sistema real, debitaria o adquirente e iniciaria a notificação
+# --- Callback para Enviar Logs da Simulação para o Streamlit ---
+def streamlit_log_callback(message, color_tag="black"):
+    # Mapeia tags de cor internas para cores HTML/CSS para exibição no Streamlit.
+    color_map = {
+        "white": "black",
+        "blue": "#1E90FF",       # DodgerBlue
+        "green": "#32CD32",      # LimeGreen
+        "red": "#FF4500",        # OrangeRed
+        "yellow": "#FFD700",     # Gold (mais visível que yellow puro)
+        "magenta": "#DA70D6",    # Orchid (um roxo suave)
+        "lightblue": "#ADD8E6",  # LightBlue
+        "black": "black",        # Padrão
+    }
+    html_color = color_map.get(color_tag, "black") # Pega a cor mapeada, ou preto como fallback
 
-    def receber_reapresentacao_adquirente(self, chargeback):
-        self._log(f"Recebida Reapresentação (Documentos de Defesa) da Adquirente para CB: {chargeback.id}", "yellow")
-        chargeback.update_status(Chargeback.STATUS_REAPRESENTADO)
-        # Bandeira avalia a defesa e envia a decisão ao Emissor
+    # Adiciona a nova mensagem formatada ao conteúdo acumulado do log.
+    # Usamos <br> para quebra de linha em HTML.
+    st.session_state.log_content += f"<span style='color: {html_color};'>{message}</span><br>"
+    
+    # Atualiza o componente de log na UI do Streamlit.
+    # unsafe_allow_html=True é necessário para renderizar tags HTML.
+    log_placeholder.markdown(st.session_state.log_content, unsafe_allow_html=True)
+    time.sleep(0.05) # Pequeno atraso para dar tempo de renderizar e para a visualização
 
-# ... Adquirente e Emissor com métodos semelhantes para chargeback ...
-class Adquirente:
-    def __init__(self, nome, log_callback=None):
-        self.nome = nome
-        self.log_callback = log_callback
-        self.transacoes_recebidas = []
-        self.transacoes_capturadas = []
-        self.estabelecimentos = {}
-        self.transacoes_a_liquidar = []
-        self.chargebacks_ativos = {} # Para rastrear CBs recebidos
 
-    def _log(self, message, color_tag="black"):
-        if self.log_callback:
-            self.log_callback(f"[{self.nome}]: {message}", color_tag)
-        else:
-            print(message)
+# --- Função para Rodar a Simulação em uma Thread Separada ---
+def run_simulation_in_thread():
+    # Instancia o simulador, passando o diretório de saída e a função de callback para logs.
+    simulator = PaymentSimulator(output_dir=output_dir, log_callback=streamlit_log_callback)
+    simulator.run_full_simulation() # Inicia o fluxo completo da simulação.
+    
+    # Após a simulação, atualiza o status final e permite que o botão seja clicado novamente.
+    status_placeholder.success("Simulação concluída! Verifique a pasta `data/output/` para os arquivos gerados.")
+    st.session_state.simulation_running = False
+    st.experimental_rerun() # Força o Streamlit a re-renderizar para atualizar o estado do botão.
 
-    # ... métodos existentes ...
+# --- Botão Iniciar/Reiniciar Simulação ---
+if st.button("Iniciar Simulação", disabled=st.session_state.simulation_running):
+    st.session_state.simulation_running = True
+    st.session_state.log_content = "" # Limpa o log ao iniciar uma nova simulação.
+    
+    # Limpa os placeholders antes de iniciar a simulação para uma nova corrida.
+    log_placeholder.empty()
+    status_placeholder.empty()
+    
+    # Inicia a função de simulação em uma nova thread.
+    # Isso é crucial para que a interface do Streamlit não "congele" durante a simulação.
+    thread = threading.Thread(target=run_simulation_in_thread)
+    thread.start()
+    
+    # Exibe um status inicial enquanto a simulação está em andamento.
+    status_placeholder.info("Simulação em andamento...")
+    st.experimental_rerun() # Re-renderiza para desabilitar o botão imediatamente.
 
-    # NOVO MÉTODO PARA CHARGEBACK
-    def receber_chargeback_bandeira(self, chargeback):
-        self._log(f"Recebida Notificação de Chargeback da Bandeira: CB ID {chargeback.id} (TXN {chargeback.transacao_original_id})", "blue")
-        self.chargebacks_ativos[chargeback.id] = chargeback
-        # Notificar estabelecimento, solicitar documentos de defesa, etc.
+# --- Exibe o Log de Eventos (Atualizado pelo callback) ---
+# Este `markdown` estará sempre "ouvindo" as atualizações do `log_placeholder`.
+log_placeholder.markdown(st.session_state.log_content, unsafe_allow_html=True)
 
-class Emissor:
-    def __init__(self, nome, log_callback=None):
-        self.nome = nome
-        self.log_callback = log_callback
-        self.portadores = {}
-        self.transacoes_aprovadas = []
-        self.transacoes_negadas = []
-        self.transacoes_para_faturar = []
-        self.chargebacks_iniciados = {} # Para rastrear CBs iniciados
-
-    def _log(self, message, color_tag="black"):
-        if self.log_callback:
-            self.log_callback(f"[{self.nome}]: {message}", color_tag)
-        else:
-            print(message)
-
-    # ... métodos existentes ...
-
-    # NOVO MÉTODO PARA CHARGEBACK
-    def receber_solicitacao_chargeback(self, chargeback):
-        self._log(f"Recebida solicitação de Chargeback do Portador para TXN {chargeback.transacao_original_id}", "red")
-        self.chargebacks_iniciados[chargeback.id] = chargeback
-        # Iniciar o processo de disputa, potencialmente estornar o portador (provisoriamente)
-
-    def receber_reapresentacao_bandeira(self, chargeback):
-        self._log(f"Recebida Avaliação da Reapresentação da Bandeira para CB: {chargeback.id}", "red")
-        # Baseado na decisão da bandeira, re-cobrar o portador ou confirmar o estorno.
-        if chargeback.status == Chargeback.STATUS_RESOLVIDO_FAVOR_ESTABELECIMENTO:
-            self._log(f"Chargeback {chargeback.id} resolvido a favor do Estabelecimento. Pode ser necessário re-cobrar o portador.", "green")
-        elif chargeback.status == Chargeback.STATUS_RESOLVIDO_FAVOR_PORTADOR:
-            self._log(f"Chargeback {chargeback.id} resolvido a favor do Portador. Estorno confirmado.", "red")
+# --- Barra Lateral com Informações Adicionais ---
+st.sidebar.header("Informações")
+st.sidebar.write("Os arquivos gerados durante a simulação (captura, liquidação, CNAB, regulatórios, etc.) serão salvos na pasta **`data/output/`** do seu ambiente.")
+st.sidebar.markdown("""
+    ---
+    Desenvolvido para fins **didáticos**.
+    Simula um ecossistema de pagamentos para ilustrar a interação
+    entre Estabelecimentos, Portadores, Adquirentes, Bandeiras, Emissores e o Banco Central.
+    """)
