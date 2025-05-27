@@ -116,4 +116,15 @@ if st.session_state.simulation_running:
 # e que a mensagem "Clique para iniciar..." apareça.
 else:
     initial_log_content = "<br>".join(st.session_state.log_messages)
-    log_placeholder
+    log_placeholder.markdown(initial_log_content, unsafe_allow_html=True)
+
+
+# --- Barra Lateral com Informações Adicionais ---
+st.sidebar.header("Informações")
+st.sidebar.write("Os arquivos gerados durante a simulação (captura, liquidação, CNAB, regulatórios, etc.) serão salvos na pasta **`data/output/`** do seu ambiente.")
+st.sidebar.markdown("""
+    ---
+    Desenvolvido para fins **didáticos**.
+    Simula um ecossistema de pagamentos para ilustrar a interação
+    entre Estabelecimentos, Portadores, Adquirentes, Bandeiras, Emissores e o Banco Central.
+    """)
