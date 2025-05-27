@@ -1,22 +1,16 @@
 # src/services/utils.py
-# Funções utilitárias aqui (ex: formatação de strings, validações gerais)
-# Se você usar colorama para logs no terminal, pode mantê-las aqui
-import time
-from colorama import Fore, Style, init
+import logging
+logger = logging.getLogger(__name__)
 
-init(autoreset=True)
+def print_message(sender, receiver, msg_type, content, color_tag="white"):
+    # Este é um fallback para console se não houver um log_callback
+    print(f"[{sender} -> {receiver}] {msg_type}: {content}")
+    logger.debug(f"Utils: print_message - {sender} -> {receiver} {msg_type}")
 
-def print_separator():
-    print(Fore.CYAN + "\n" + "="*80 + Style.RESET_ALL)
+def print_file_action(entity, action, filename, color_tag="green"):
+    print(f"[{entity}] {action} Arquivo: {filename}")
+    logger.debug(f"Utils: print_file_action - {entity} {action} {filename}")
 
-def print_step(title):
-    print(Fore.MAGENTA + f"\n--- {title} ---" + Style.RESET_ALL)
-    time.sleep(1)
-
-def print_message(sender, receiver, msg_type, content, color=Fore.WHITE):
-    print(color + f"[{sender} -> {receiver}] {msg_type}: {content}" + Style.RESET_ALL)
-    time.sleep(0.5)
-
-def print_file_action(entity, action, filename, color=Fore.GREEN):
-    print(color + f"[{entity}] {action} Arquivo: {os.path.basename(filename)}" + Style.RESET_ALL)
-    time.sleep(0.7)
+def print_step(title, color_tag="magenta"):
+    print(f"\n--- {title} ---")
+    logger.debug(f"Utils: print_step - {title}")
