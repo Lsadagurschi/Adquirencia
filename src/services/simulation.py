@@ -3,24 +3,21 @@ import datetime
 import time
 import os
 
-from src.models.transaction import Transacao
-from src.models.entities import Adquirente, Emissor, Bandeira, Estabelecimento, Portador
-from src.services.file_generator import (
-    generate_capture_file, generate_liquidation_file_adq,
-    generate_liquidation_file_emissor, generate_payment_cnab_file,
-    generate_faturamento_3040_file, generate_regulatory_file
-)
-from src.services.utils import print_message, print_file_action, print_step, print_separator # Ou adaptar para logs da GUI
+from src.models.chargeback import Chargeback # Novo import
+from src.services.chargeback_processor import ChargebackProcessor # Novo import
+from src.services.regulatory_reporter import RegulatoryReporter # Novo import
 
 class PaymentSimulator:
     def __init__(self, output_dir="data/output/", log_callback=None):
         self.adquirente = Adquirente("AdquirenteXPTO", log_callback)
         self.emissor = Emissor("BancoAlpha", log_callback)
         self.bandeira = Bandeira("BandeiraPrincipal", log_callback)
+        self.cb_processor = ChargebackProcessor(log_callback, output_dir) # Novo
+        self.regulatory_reporter = RegulatoryReporter(log_callback, output_dir) # Novo
         self.output_dir = output_dir
         self.log_callback = log_callback
 
-        # Setup inicial das entidades
+        # Setup inicial das entidades (MANTÉM)
         self.estab_1 = Estabelecimento("ESTAB001", "Loja do Zé", "4751-2/01")
         self.adquirente.cadastrar_estabelecimento(self.estab_1)
         self.portador_1 = Portador("PORT001", "Maria Silva", "123.456.789-00", "CREDITO")
@@ -28,12 +25,15 @@ class PaymentSimulator:
         self.portador_2 = Portador("PORT002", "João Pereira", "987.654.321-00", "DEBITO")
         self.emissor.cadastrar_portador(self.portador_2)
 
-    def _log_step(self, title):
+        # Listas para coletar todas as transações para relatórios
+        self.all_processed_transactions = [] # Para CADOC 6334
+
+    def _log_step(self, title, color_tag="magenta"):
         if self.log_callback:
-            self.log_callback(f"\n--- {title} ---", "magenta") # Cor para títulos
+            self.log_callback(f"\n--- {title} ---", color_tag)
         else:
             print_step(title)
-        time.sleep(1) # Simula delay
+        time.sleep(1)
 
     def _log_message(self, sender, receiver, msg_type, content, color_tag="white"):
         if self.log_callback:
@@ -49,7 +49,6 @@ class PaymentSimulator:
             print_file_action(entity, action, filename)
         time.sleep(0.7)
 
-
     def run_full_simulation(self):
         self._log_step("1. FLUXO DE AUTORIZAÇÃO EM TEMPO REAL (ISO 8583)")
 
@@ -60,17 +59,13 @@ class PaymentSimulator:
             id_estabelecimento=self.estab_1.id, id_portador=self.portador_1.id
         )
         self._log_message("Portador", "Estabelecimento", "Passagem de Cartão", f"Cartão {transacao_1.numero_cartao_bin} - R${transacao_1.valor:.2f}", "white")
-        time.sleep(1)
-
-        transacao_processada_adquirente = self.adquirente.receber_transacao(transacao_1)
-        time.sleep(1)
-        transacao_roteada_bandeira = self.adquirente.enviar_para_bandeira(transacao_processada_adquirente, self.bandeira)
-        time.sleep(1)
-        transacao_autorizada_emissor = self.emissor.receber_solicitacao_autorizacao(transacao_roteada_bandeira)
-        time.sleep(1)
-        transacao_resposta_adquirente = self.bandeira.rotear_resposta_do_emissor(transacao_autorizada_emissor)
-        time.sleep(1)
-        self.adquirente.receber_resposta_bandeira(transacao_resposta_adquirente)
+        
+        t1_adq_processed = self.adquirente.receber_transacao(transacao_1)
+        t1_bandeira_routed = self.adquirente.enviar_para_bandeira(t1_adq_processed, self.bandeira)
+        t1_emissor_auth = self.emissor.receber_solicitacao_autorizacao(t1_bandeira_routed)
+        t1_adq_response = self.bandeira.rotear_resposta_do_emissor(t1_emissor_auth)
+        self.adquirente.receber_resposta_bandeira(t1_adq_response)
+        self.all_processed_transactions.append(t1_adq_response) # Coleta para relatórios
 
         # Transação 2: Negada
         transacao_2 = Transacao(
@@ -79,16 +74,13 @@ class PaymentSimulator:
             id_estabelecimento=self.estab_1.id, id_portador=self.portador_2.id
         )
         self._log_message("Portador", "Estabelecimento", "Passagem de Cartão", f"Cartão {transacao_2.numero_cartao_bin} - R${transacao_2.valor:.2f}", "white")
-        time.sleep(1)
-        transacao_processada_adquirente_2 = self.adquirente.receber_transacao(transacao_2)
-        time.sleep(1)
-        transacao_roteada_bandeira_2 = self.adquirente.enviar_para_bandeira(transacao_processada_adquirente_2, self.bandeira)
-        time.sleep(1)
-        transacao_autorizada_emissor_2 = self.emissor.receber_solicitacao_autorizacao(transacao_roteada_bandeira_2)
-        time.sleep(1)
-        transacao_resposta_adquirente_2 = self.bandeira.rotear_resposta_do_emissor(transacao_autorizada_emissor_2)
-        time.sleep(1)
-        self.adquirente.receber_resposta_bandeira(transacao_resposta_adquirente_2)
+        
+        t2_adq_processed = self.adquirente.receber_transacao(transacao_2)
+        t2_bandeira_routed = self.adquirente.enviar_para_bandeira(t2_adq_processed, self.bandeira)
+        t2_emissor_auth = self.emissor.receber_solicitacao_autorizacao(t2_bandeira_routed)
+        t2_adq_response = self.bandeira.rotear_resposta_do_emissor(t2_emissor_auth)
+        self.adquirente.receber_resposta_bandeira(t2_adq_response)
+        self.all_processed_transactions.append(t2_adq_response) # Coleta para relatórios
         self._log_step("FIM DA AUTORIZAÇÃO")
 
         self._log_step("2. PROCESSO DE CAPTURA (Lotes - Adquirente -> Bandeira)")
@@ -96,24 +88,33 @@ class PaymentSimulator:
         if arquivo_captura_adquirente:
             self._log_file_action(self.adquirente.nome, "Gerado", arquivo_captura_adquirente, "green")
             self._log_message(self.adquirente.nome, self.bandeira.nome, "Envio SFTP", f"Arquivo de Captura: {os.path.basename(arquivo_captura_adquirente)}", "lightblue")
-            # Simular a Bandeira processando (em um cenário real, ela leria este arquivo)
         self._log_step("FIM DA CAPTURA")
 
         self._log_step("3. PROCESSO DE LIQUIDAÇÃO (Lotes - Bandeira -> Adquirente e Emissor)")
         arquivo_liquidacao_adquirente = generate_liquidation_file_adq(self.adquirente.transacoes_capturadas, self.output_dir)
-        time.sleep(1)
         if arquivo_liquidacao_adquirente:
             self._log_file_action(self.bandeira.nome, "Gerado (p/ Adquirente)", arquivo_liquidacao_adquirente, "green")
             self._log_message(self.bandeira.nome, self.adquirente.nome, "Envio SFTP", f"Arquivo de Liquidação Adquirente: {os.path.basename(arquivo_liquidacao_adquirente)}", "lightblue")
-            # A Adquirente processaria este arquivo aqui
-        time.sleep(1)
+            # Adquirente processa o arquivo para marcar transações como liquidadas
+            # Lógica de processamento no services/file_generator.py
+            # Forçar um "processamento" de status aqui para fins de simulação
+            for t in self.adquirente.transacoes_capturadas:
+                if t.status == "APROVADA_CAPTURA": # Se foi capturada e está no arquivo de liquidação
+                    t.status = "LIQUIDADA_ADQUIRENTE"
+                    self.adquirente.transacoes_a_liquidar.append(t)
+                    self._log_message(self.adquirente.nome, "Interno", "Status Atualizado", f"TXN {t.id} - LIQUIDADA_ADQUIRENTE", "blue")
+
 
         arquivo_liquidacao_emissor = generate_liquidation_file_emissor(self.emissor.transacoes_aprovadas, self.output_dir)
-        time.sleep(1)
         if arquivo_liquidacao_emissor:
             self._log_file_action(self.bandeira.nome, "Gerado (p/ Emissor)", arquivo_liquidacao_emissor, "green")
             self._log_message(self.bandeira.nome, self.emissor.nome, "Envio SFTP", f"Arquivo de Liquidação Emissor: {os.path.basename(arquivo_liquidacao_emissor)}", "lightblue")
-            # O Emissor processaria este arquivo aqui
+            # Emissor processa o arquivo
+            for t in self.emissor.transacoes_aprovadas:
+                if t.status == "APROVADA_EMISSOR": # Se foi aprovada pelo emissor e está no arquivo de liquidação
+                    t.status = "LIQUIDADA_EMISSOR"
+                    self.emissor.transacoes_para_faturar.append(t)
+                    self._log_message(self.emissor.nome, "Interno", "Status Atualizado", f"TXN {t.id} - LIQUIDADA_EMISSOR", "red")
         self._log_step("FIM DA LIQUIDAÇÃO")
 
         self._log_step("4. PROCESSO DE PAGAMENTO (Lotes - Adquirente -> Bancos dos Estabelecimentos - CNAB)")
@@ -129,10 +130,45 @@ class PaymentSimulator:
              self._log_file_action(self.emissor.nome, "Gerado (XML para Faturamento/3040 Simulado)", arquivo_faturamento_emissor, "green")
         self._log_step("FIM DO FATURAMENTO")
 
-        self._log_step("6. ARQUIVOS REGULATÓRIOS (Adquirente/Emissor -> Banco Central)")
-        generate_regulatory_file(self.adquirente.nome, self.adquirente.transacoes_capturadas, "Adquirente", "CADOC_5817_SIMULADO", self.output_dir)
+        # --- NOVO: FLUXO DE CHARGEBACK ---
+        self._log_step("6. FLUXO DE CHARGEBACK (DISPUTA DE COMPRA)")
+        # Simular um chargeback para a transacao_1 (APROVADA)
+        cb_tx1 = self.cb_processor.iniciar_chargeback(self.emissor, self.adquirente, self.bandeira, transacao_1, "Mercadoria Não Recebida")
+        time.sleep(2)
+        if cb_tx1:
+            self._log_step("6.1. FASE DE DEFESA DO CHARGEBACK")
+            self.cb_processor.processar_defesa_chargeback(self.adquirente, self.bandeira, cb_tx1)
+            time.sleep(2)
+            self._log_step("6.2. FINALIZAÇÃO DO CHARGEBACK")
+            self.cb_processor.finalizar_chargeback(self.emissor, self.bandeira, cb_tx1)
+        self._log_step("FIM DO CHARGEBACK")
+
+        # --- NOVO: ARQUIVOS REGULATÓRIOS DETALHADOS ---
+        self._log_step("7. ARQUIVOS REGULATÓRIOS (Adquirente/Emissor -> Banco Central)")
+        current_month_year = datetime.datetime.now().strftime("%Y%m")
+
+        # Dados para o CADOC 3040 (SCR) - Emissor
+        # Coletar transações aprovadas e chargebacks para o relatório de crédito
+        emissor_report_data = {
+            self.emissor.nome: self.emissor.transacoes_aprovadas + list(self.cb_processor.chargebacks_ativos.values())
+        }
+        self.regulatory_reporter.generate_cadoc_3040_scr(emissor_report_data, current_month_year)
         time.sleep(1)
-        generate_regulatory_file(self.emissor.nome, self.emissor.transacoes_aprovadas, "Emissor", "CADOC_3040_DADOS_SIMULADO", self.output_dir)
+
+        # Dados para o CADOC 5817 (Credenciadoras) - Adquirente
+        adquirente_report_data = {
+            "transacoes_capturadas": self.adquirente.transacoes_capturadas,
+            "transacoes_negadas": self.adquirente.transacoes_recebidas, # Negadas estão aqui tb
+            "estabelecimentos": self.adquirente.estabelecimentos,
+            "chargebacks_ativos": self.adquirente.chargebacks_ativos # Adquirente também rastreia
+        }
+        self.regulatory_reporter.generate_cadoc_5817_credenciadoras(adquirente_report_data, current_month_year)
+        time.sleep(1)
+
+        # Dados para o CADOC 6334 (Estatístico) - Geral
+        self.regulatory_reporter.generate_cadoc_6334_estatistico(self.all_processed_transactions, current_month_year)
+        
         self._log_step("FIM DOS REGULATÓRIOS")
 
         self.log_callback("SIMULAÇÃO COMPLETA CONCLUÍDA!", "green")
+
