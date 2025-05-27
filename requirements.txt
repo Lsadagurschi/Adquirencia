@@ -1,0 +1,4 @@
+# requirements.txt
+streamlit
+colorama
+pyngrok # Se for usar ngrok no Colab para teste
