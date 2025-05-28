@@ -10,7 +10,7 @@ from src.models.chargeback import Chargeback
 from src.services.utils import print_message, print_file_action, print_step # Pode ser que essas não sejam usadas se o callback for o único método
 
 class ChargebackProcessor:
-    def __init__(self, log_callback=None, output_dir="data/output/"):
+    def __init__(self, log_callback=None, output_dir="data/output/"): # Mantenha essa ordem padrão ou use argumentos nomeados na chamada
         self.log_callback = log_callback
         self.output_dir = output_dir
         self.chargebacks_ativos = {}
