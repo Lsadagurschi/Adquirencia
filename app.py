@@ -172,7 +172,8 @@ def draw_animation_step(step_data):
     html_content += "</div>"
 
     animation_placeholder.markdown(html_content, unsafe_allow_html=True)
-    unsafe_allow_html=True
+
+
 
 
 # --- Callback para Enviar Logs da Simulação para a FILA (na thread secundária) ---
