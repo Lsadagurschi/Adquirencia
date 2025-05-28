@@ -50,11 +50,9 @@ log_placeholder = st.empty()
 
 
 # --- Funções Auxiliares para Animação ---
-def get_image_path(entity_name, is_active=False):
-    """Retorna o caminho da imagem para uma entidade, com versão 'ativa' se disponível."""
+def get_image_path(entity_name):
+    """Retorna o caminho da imagem para uma entidade."""
     base_path = "assets/images"
-    # Você pode ter imagens "ativas" com cores diferentes, ex: client_active.png
-    # Por enquanto, apenas destacamos com borda no CSS, mas o nome do arquivo pode mudar.
     return f"{base_path}/{entity_name}.png"
 
 
@@ -65,16 +63,16 @@ def draw_animation_step(step_data):
     """
     description = step_data.get('description', '')
     active_entities = step_data.get('active_entities', [])
-    flow_path = step_data.get('flow_path', None)
+    flow_path_display = step_data.get('flow_path', None)
 
     # Definição das entidades e seus IDs (para consistência com o CSS)
     entities = {
-        "client": {"label": "Cliente", "order": 1},
-        "store": {"label": "Estabelecimento", "order": 2},
-        "acquirer": {"label": "Adquirente", "order": 3},
-        "flag": {"label": "Bandeira", "order": 4},
-        "issuer": {"label": "Emissor", "order": 5},
-        "bcb": {"label": "Banco Central", "order": 6},
+        "client": {"label": "Cliente"},
+        "store": {"label": "Estabelecimento"},
+        "acquirer": {"label": "Adquirente"},
+        "flag": {"label": "Bandeira"},
+        "issuer": {"label": "Emissor"},
+        "bcb": {"label": "Banco Central"},
     }
 
     # CSS para layout e destaque
@@ -99,7 +97,7 @@ def draw_animation_step(step_data):
             padding: 10px;
             border: 2px solid transparent; /* Borda transparente padrão */
             border-radius: 8px;
-            transition: border-color 0.3s ease-in-out; /* Transição suave para a borda */
+            transition: border-color 0.3s ease-in-out, box-shadow 0.3s ease-in-out; /* Transição suave */
             min-width: 120px; /* Garante largura mínima */
         }
         .entity-box.active {
@@ -120,6 +118,9 @@ def draw_animation_step(step_data):
             width: 100%; /* Ocupa a largura total para centralizar */
             text-align: center;
             min-height: 25px; /* Para evitar pular o layout */
+            display: flex; /* Para alinhar o ícone do pagamento */
+            justify-content: center;
+            align-items: center;
         }
     </style>
     """
@@ -131,8 +132,7 @@ def draw_animation_step(step_data):
         is_active = entity_id in active_entities
         active_class = "active" if is_active else ""
         
-        # Certifique-se de que cada imagem tenha um caminho válido
-        img_src = get_image_path(entity_id) # Usamos o get_image_path para todas
+        img_src = get_image_path(entity_id) 
         
         html_content += f"""
         <div class="entity-box {active_class}">
@@ -144,8 +144,31 @@ def draw_animation_step(step_data):
 
     # Adiciona a descrição da etapa e o indicador de fluxo
     html_content += f"<div class='flow-indicator'>{description}"
-    if flow_path:
-        html_content += f" &#8594; <img src='assets/images/payment_token.png' width='25px' style='vertical-align:middle;'> {flow_path.replace('_', ' &#8594; ')}"
+    if flow_path_display:
+        # Substitui '_to_' e '_from_' por setas para visualização do fluxo
+        # e insere o ícone de pagamento no meio do fluxo
+        path_parts = flow_path_display.split('_to_')
+        if len(path_parts) == 2:
+            source = path_parts[0].capitalize()
+            dest = path_parts[1].capitalize()
+            flow_display = f"{source} &#8594; <img src='assets/images/payment_token.png' width='25px' style='vertical-align:middle; margin: 0 5px;'> &#8594; {dest}"
+        else: # Handle 'from' cases or simpler flows
+            path_parts = flow_path_display.split('_from_')
+            if len(path_parts) == 2:
+                source = path_parts[1].capitalize() # 'from' é o destino, então o segundo é a origem
+                dest = path_parts[0].capitalize()
+                flow_display = f"{source} &#8594; <img src='assets/images/payment_token.png' width='25px' style='vertical-align:middle; margin: 0 5px;'> &#8594; {dest}"
+            else: # Fallback para casos não mapeados, ou fluxo simples
+                 flow_display = flow_path_display.replace('_', ' &#8594; ')
+                 # Se não tiver token, talvez seja um passo interno ou de setup
+                 if 'token' not in flow_path_display:
+                     flow_display = "" # Limpa para não mostrar "client -> store" sem o token
+                 else:
+                     flow_display = flow_path_display.replace('token', '<img src="assets/images/payment_token.png" width="25px" style="vertical-align:middle; margin: 0 5px;">')
+
+
+        html_content += f"<br><small>{flow_display}</small>" # Usa small para o fluxo
+
     html_content += "</div>"
 
     animation_placeholder.markdown(html_content, unsafe_allow_html=True)
