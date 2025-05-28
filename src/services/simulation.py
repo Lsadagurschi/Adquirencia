@@ -20,14 +20,18 @@ from src.services.regulatory_reporter import RegulatoryReporter
 class PaymentSimulator:
     def __init__(self, output_dir="data/output/", log_callback=None):
         self.output_dir = output_dir
-        self.log_callback = log_callback
+        self.log_callback = log_callback # Este é agora uma lambda que inclui a fila
+
         logger.info("PaymentSimulator: Inicializando simulador.")
 
-        self.adquirente = Adquirente("AdquirenteXPTO", log_callback)
-        self.emissor = Emissor("BancoAlpha", log_callback)
-        self.bandeira = Bandeira("BandeiraPrincipal", log_callback)
-        self.cb_processor = ChargebackProcessor(log_callback, output_dir)
-        self.regulatory_reporter = RegulatoryReporter(log_callback, output_dir)
+        # Corrigir a ordem dos argumentos para os construtores abaixo
+        self.adquirente = Adquirente("AdquirenteXPTO", log_callback=self.log_callback) # Passa como argumento nomeado
+        self.emissor = Emissor("BancoAlpha", log_callback=self.log_callback) # Passa como argumento nomeado
+        self.bandeira = Bandeira("BandeiraPrincipal", log_callback=self.log_callback) # Passa como argumento nomeado
+        
+        # Aqui, a ordem dos argumentos está correta na definição dos __init__
+        self.cb_processor = ChargebackProcessor(log_callback=self.log_callback, output_dir=self.output_dir)
+        self.regulatory_reporter = RegulatoryReporter(output_dir=self.output_dir, log_callback=self.log_callback) # <--- ORDEM CORRIGIDA!
         
         # Setup inicial das entidades (MANTÉM)
         self.estab_1 = Estabelecimento("ESTAB001", "Loja do Zé", "4751-2/01")
