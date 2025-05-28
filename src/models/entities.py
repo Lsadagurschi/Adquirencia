@@ -30,7 +30,7 @@ class Portador:
         logger.debug(f"Portador: {self.nome} ({self.id}) criado.")
 
 class Bandeira:
-    def __init__(self, nome, log_callback=None):
+    def __init__(self, nome, log_callback=None): # Mantenha essa ordem padrão ou use argumentos nomeados na chamada
         self.nome = nome
         self.log_callback = log_callback
         self.transacoes_pendentes_emissor = {}
@@ -71,7 +71,7 @@ class Bandeira:
         logger.debug(f"Bandeira: CB {chargeback.id} atualizado para STATUS_REAPRESENTADO.")
 
 class Adquirente:
-    def __init__(self, nome, log_callback=None):
+    def __init__(self, nome, log_callback=None): # Mantenha essa ordem padrão ou use argumentos nomeados na chamada
         self.nome = nome
         self.log_callback = log_callback
         self.transacoes_recebidas = [] # Todas as transações passadas
@@ -125,7 +125,7 @@ class Adquirente:
 
 
 class Emissor:
-    def __init__(self, nome, log_callback=None):
+    def __init__(self, nome, log_callback=None): # Mantenha essa ordem padrão ou use argumentos nomeados na chamada
         self.nome = nome
         self.log_callback = log_callback
         self.portadores = {}
