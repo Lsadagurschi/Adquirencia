@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import time
 import threading
@@ -55,11 +54,11 @@ def streamlit_log_callback(q: queue.Queue, message: str, color_tag: str = "black
     }
     html_color = color_map.get(color_tag, "black")
     
-    # A ÚNICA ALTERAÇÃO: Garante que a string HTML seja completa, com <span> e </span>
+    # GARANTE QUE CADA MENSAGEM SEJA UM BLOCO HTML COMPLETO E BEM FORMADO
     formatted_message = f"<span style='color: {html_color};'>{message}</span>"
     
     try:
-        q.put(formatted_message) # Envia a mensagem HTML completa
+        q.put(formatted_message) # Envia a mensagem HTML completa para a fila
         logger.debug(f"app.py: Mensagem colocada na fila: {message}")
     except Exception as e:
         logger.error(f"app.py: Erro ao colocar log na fila: {e}", exc_info=True)
@@ -69,14 +68,18 @@ def streamlit_log_callback(q: queue.Queue, message: str, color_tag: str = "black
 def run_simulation_in_thread_target(log_queue_ref: queue.Queue, log_callback_func, output_dir_path):
     logger.info("app.py: Thread de simulação iniciada.")
     try:
-        simulator = PaymentSimulator(output_dir=output_dir_path, log_callback=lambda msg, color: log_callback_func(log_queue_ref, msg, color))
+        # Passa uma função lambda que já encapsula a fila para a PaymentSimulator
+        simulator = PaymentSimulator(output_dir=output_dir_path, 
+                                     log_callback=lambda msg, color: log_callback_func(log_queue_ref, msg, color))
         simulator.run_full_simulation()
     except Exception as e:
-        log_callback_func(log_queue_ref, f"ERRO CRÍTICO NA SIMULAÇÃO (THREAD): {e}", "red")
+        # Se ocorrer um erro crítico na simulação, registre-o na fila
+        log_callback_func(log_queue_ref, f"ERRO CRÍTICO NA SIMULAÇÃO (THREAD): {e}", "red") # Passa a fila e a mensagem
         logger.error(f"app.py: Erro na thread de simulação: {e}", exc_info=True)
     finally:
         st.session_state.thread_finished = True
         logger.info("app.py: st.session_state.thread_finished definido como True.")
+
 
 # --- Lógica Principal do Streamlit App ---
 logger.info(f"app.py: Início da lógica principal. simulation_running: {st.session_state.simulation_running}")
@@ -84,15 +87,16 @@ logger.info(f"app.py: Início da lógica principal. simulation_running: {st.sess
 if st.button("Iniciar Simulação", disabled=st.session_state.simulation_running):
     logger.info("app.py: Botão 'Iniciar Simulação' clicado.")
     st.session_state.simulation_running = True
-    st.session_state.log_messages = []
-    st.session_state.thread_finished = False
+    st.session_state.log_messages = [] # Limpa o log ao iniciar
+    st.session_state.thread_finished = False # Reseta o flag da thread
     
     with st.session_state.log_queue.mutex:
-        st.session_state.log_queue.queue.clear()
+        st.session_state.log_queue.queue.clear() # Limpa a fila ao iniciar
     
     log_placeholder.empty()
     status_placeholder.empty()
     
+    # Passa a REFERÊNCIA da fila e a função de callback para a thread
     thread = threading.Thread(target=run_simulation_in_thread_target, 
                               args=(st.session_state.log_queue, streamlit_log_callback, output_dir))
     thread.start()
@@ -104,21 +108,25 @@ if st.session_state.simulation_running:
     status_placeholder.info("Simulação em andamento...")
     
     while not st.session_state.thread_finished or not st.session_state.log_queue.empty():
+        # Enquanto a thread não terminou OU ainda há mensagens na fila
         while not st.session_state.log_queue.empty():
             try:
+                # Pega a mensagem formatada em HTML da fila (non-blocking)
                 message = st.session_state.log_queue.get_nowait()
                 st.session_state.log_messages.append(message)
                 logger.debug(f"app.py: Mensagem pega da fila: {message[:50]}...")
             except queue.Empty:
-                break
+                break # Fila vazia, sai do loop interno
             except Exception as e:
                 logger.error(f"app.py: Erro ao pegar log da fila: {e}", exc_info=True)
                 break
 
+        # Renderiza todo o conteúdo do log acumulado no st.session_state
+        # Cada item já é um <span>...</span> completo, o <br> do join serve para quebrar linha entre eles
         current_log_content = "<br>".join(st.session_state.log_messages)
         log_placeholder.markdown(current_log_content, unsafe_allow_html=True)
         
-        time.sleep(0.1)
+        time.sleep(0.1) # Pequena pausa para evitar sobrecarga de CPU
 
     logger.info("app.py: Saindo do loop de atualização de logs.")
     final_log_content = "<br>".join(st.session_state.log_messages)
@@ -126,14 +134,17 @@ if st.session_state.simulation_running:
     
     status_placeholder.success("Simulação concluída! Verifique a pasta `data/output/` para os arquivos gerados.")
     st.session_state.simulation_running = False
-    st.session_state.thread_finished = False
+    st.session_state.thread_finished = False # Resetar para a próxima execução
     logger.info("app.py: Simulação concluída e estado resetado.")
 
+# --- Exibir o log inicial/final quando a simulação não está rodando ---
 else:
     initial_log_content = "<br>".join(st.session_state.log_messages)
     log_placeholder.markdown(initial_log_content, unsafe_allow_html=True)
     logger.info("app.py: Exibindo log inicial/final.")
 
+
+# --- Barra Lateral com Informações Adicionais ---
 st.sidebar.header("Informações")
 st.sidebar.write("Os arquivos gerados durante a simulação (captura, liquidação, CNAB, regulatórios, etc.) serão salvos na pasta **`data/output/`** do seu ambiente.")
 st.sidebar.markdown("""
