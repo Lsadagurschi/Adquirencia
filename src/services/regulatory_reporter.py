@@ -12,11 +12,12 @@ from src.models.transaction import Transacao
 from src.models.chargeback import Chargeback
 
 class RegulatoryReporter:
+    # A ORDEM DOS ARGUMENTOS NO __INIT__ É IMPORTANTE AQUI
+    # Para corresponder à chamada em simulation.py (output_dir primeiro)
     def __init__(self, output_dir="data/output/", log_callback=None):
         self.output_dir = output_dir
         self.log_callback = log_callback
         logger.debug("RegulatoryReporter inicializado.")
-
     def _log(self, message, color_tag="black"):
         if self.log_callback:
             self.log_callback(message, color_tag)
