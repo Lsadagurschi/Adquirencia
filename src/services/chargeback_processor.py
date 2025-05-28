@@ -1,98 +1,90 @@
-# src/services/chargeback_processor.py
 import datetime
-import random
 import time
-import os
 import logging
+
 logger = logging.getLogger(__name__)
 
-from src.models.chargeback import Chargeback
-from src.services.utils import print_message, print_file_action, print_step # Pode ser que essas não sejam usadas se o callback for o único método
-
 class ChargebackProcessor:
-    def __init__(self, log_callback=None, output_dir="data/output/"): # Mantenha essa ordem padrão ou use argumentos nomeados na chamada
+    def __init__(self, log_callback=None, output_dir="data/output/"):
         self.log_callback = log_callback
         self.output_dir = output_dir
-        self.chargebacks_ativos = {}
         logger.debug("ChargebackProcessor inicializado.")
 
-    def _log(self, message, color_tag="black"):
+    def _log(self, message, color_tag="black", animation_data=None):
         if self.log_callback:
-            self.log_callback(message, color_tag)
-        else:
-            print(message) # Fallback para console
-        logger.debug(f"ChargebackProcessor Log: {message}")
+            self.log_callback(f"[ChargebackProcessor]: {message}", color_tag, animation_data)
 
-    def _log_cb_action(self, sender, receiver, msg_type, content, color_tag="black"):
-        self._log(f"[{sender} -> {receiver}] Chargeback: {msg_type} - {content}", color_tag)
-        time.sleep(0.5) # Ajustado para 0.5s para agilizar um pouco a depuração
-        logger.debug(f"ChargebackProcessor Action Log: {sender} -> {receiver} {msg_type}")
+    def processar_chargeback(self, portador, emissor, bandeira, adquirente, estabelecimento, transacao_disputada):
+        self._log(
+            "----- FLUXO DE CHARGEBACK INICIADO PARA TXN " + transacao_disputada.id + " -----",
+            "magenta",
+            {"description": "Iniciando processo de Chargeback", "active_entities": ["client", "issuer"], "flow_path": None}
+        )
+        time.sleep(0.5)
 
-    def iniciar_chargeback(self, emissor_obj, adquirente_obj, bandeira_obj, transacao_original, motivo):
-        self._log(f"\n----- FLUXO DE CHARGEBACK INICIADO PARA TXN {transacao_original.id} -----", "magenta")
-        logger.info(f"ChargebackProcessor: Iniciando CB para TXN {transacao_original.id}.")
+        # 1. Portador inicia Chargeback
+        portador.iniciar_chargeback(emissor, transacao_disputada.id, "Mercadoria Não Recebida")
 
-        chargeback_id = f"CB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{random.randint(100,999)}"
-        chargeback = Chargeback(chargeback_id, transacao_original.id, motivo, transacao_original.valor, datetime.datetime.now())
-        self.chargebacks_ativos[chargeback.id] = chargeback
-        logger.debug(f"ChargebackProcessor: CB {chargeback.id} criado e adicionado a ativos.")
+        # 2. Emissor recebe solicitação e a encaminha para a Bandeira
+        cb_id = emissor.encaminhar_chargeback_para_bandeira(transacao_disputada.id, bandeira)
 
-        self._log_cb_action("Portador", "Emissor", "Iniciando Chargeback", f"Motivo: {motivo}", "red")
-        emissor_obj.receber_solicitacao_chargeback(chargeback)
-        chargeback.update_status(Chargeback.STATUS_INICIADO)
+        # 3. Bandeira registra e notifica a Adquirente
+        bandeira.registrar_chargeback(cb_id, transacao_disputada.id)
+        adquirente.receber_notificacao_chargeback(cb_id, transacao_disputada.id)
         
-        self._log_cb_action("Emissor", "Bandeira", "Disputa de Compra", f"ID CB: {chargeback.id}, TXN: {transacao_original.id}", "red")
-        bandeira_obj.receber_chargeback_emissor(chargeback)
-
-        self._log_cb_action("Bandeira", "Adquirente", "Notificação de Chargeback", f"ID CB: {chargeback.id}, TXN: {transacao_original.id}", "yellow")
-        adquirente_obj.receber_chargeback_bandeira(chargeback)
+        # 4. Adquirente notifica o Estabelecimento
+        estabelecimento.receber_notificacao_chargeback(cb_id, transacao_disputada.id)
         
-        self._log_cb_action("Adquirente", "Estabelecimento", "Notificação de Chargeback", f"ID CB: {chargeback.id}, TXN: {transacao_original.id}", "blue")
-        self._log(f"[Estabelecimento]: Recebeu notificação de chargeback para TXN {transacao_original.id}. Preparando defesa...", "blue")
-        logger.info(f"ChargebackProcessor: CB {chargeback.id} iniciado em todas as partes.")
+        self._log("--- 6.1. FASE DE DEFESA DO CHARGEBACK ---", "magenta",
+                  {"description": "Fase de Defesa do Chargeback", "active_entities": ["store"], "flow_path": None})
+        time.sleep(0.5)
+        self._log(
+            "----- FLUXO DE CHARGEBACK - FASE DE DEFESA PARA CB " + cb_id + " -----",
+            "magenta",
+            {"description": "Fase de Defesa - Estabelecimento", "active_entities": ["store"], "flow_path": None}
+        )
+        time.sleep(0.1)
+
+        # 5. Estabelecimento prepara e envia defesa para Adquirente
+        if estabelecimento.preparar_defesa_chargeback(cb_id):
+            adquirente.enviar_reapresentacao(cb_id, transacao_disputada.id, bandeira)
         
-        return chargeback
-
-    def processar_defesa_chargeback(self, adquirente_obj, bandeira_obj, emissor_obj, chargeback): # Adicionado emissor_obj aqui para a chamada final
-        self._log(f"\n----- FLUXO DE CHARGEBACK - FASE DE DEFESA PARA CB {chargeback.id} -----", "magenta")
-        logger.info(f"ChargebackProcessor: Processando defesa para CB {chargeback.id}.")
-
-        self._log_cb_action("Estabelecimento", "Adquirente", "Documentos de Defesa", f"CB: {chargeback.id}", "blue")
+        # 6. Adquirente envia reapresentação para a Bandeira
+        bandeira.receber_reapresentacao(cb_id, transacao_disputada.id, "Docs: Ok")
         
-        chargeback.update_status(Chargeback.STATUS_DOCUMENTACAO_ENVIADA)
-        self._log_cb_action("Adquirente", "Bandeira", "Reapresentação (Representment)", f"CB: {chargeback.id}, Docs: Ok", "green")
-        bandeira_obj.receber_reapresentacao_adquirente(chargeback)
+        self._log(
+            "----- FLUXO DE CHARGEBACK - FASE DE DEFESA CONCLUÍDA PARA CB " + cb_id + " -----",
+            "magenta",
+            {"description": "Defesa Concluída", "active_entities": ["store", "acquirer", "flag", "issuer"], "flow_path": None}
+        )
+        time.sleep(0.5)
+
+        self._log("--- 6.2. FINALIZAÇÃO DO CHARGEBACK ---", "magenta",
+                  {"description": "Finalização do Chargeback", "active_entities": ["flag"], "flow_path": None})
+        time.sleep(0.5)
+        self._log(
+            "----- FLUXO DE CHARGEBACK - FINALIZAÇÃO PARA CB " + cb_id + " -----",
+            "magenta",
+            {"description": "Finalização do Chargeback", "active_entities": ["flag", "issuer", "client", "store"], "flow_path": None}
+        )
+        time.sleep(0.1)
         
-        chargeback.update_status(Chargeback.STATUS_REAPRESENTADO) # Atualiza o status do CB
-        self._log_cb_action("Bandeira", "Emissor", "Reapresentação Avaliada", f"CB: {chargeback.id}, Resultado: Aguardando Decisão", "yellow")
-        
-        # Emissor precisa avaliar o resultado da reapresentação
-        emissor_obj.receber_reapresentacao_bandeira(chargeback) # O emissor precisa ser passado aqui
-        
-        self._log(f"\n----- FLUXO DE CHARGEBACK - FASE DE DEFESA CONCLUÍDA PARA CB {chargeback.id} -----", "magenta")
-        logger.info(f"ChargebackProcessor: Defesa para CB {chargeback.id} processada.")
+        # 7. Bandeira decide e informa Emissor
+        resolucao = bandeira.receber_reapresentacao(cb_id, transacao_disputada.id, "Docs: Ok") # Simula a decisão
+        bandeira.finalizar_chargeback(cb_id, resolucao, emissor)
 
-    def finalizar_chargeback(self, emissor_obj, bandeira_obj, chargeback):
-        self._log(f"\n----- FLUXO DE CHARGEBACK - FINALIZAÇÃO PARA CB {chargeback.id} -----", "magenta")
-        logger.info(f"ChargebackProcessor: Finalizando CB {chargeback.id}.")
+        # 8. Emissor notifica Portador da decisão
+        emissor.notificar_portador_decisao_chargeback(cb_id, resolucao)
 
-        # Simula a decisão da Bandeira e comunicação ao Emissor
-        # Para simulação, vamos definir que a decisão é sempre a favor do Estabelecimento
-        # em 70% dos casos para simular a defesa, e a favor do Portador em 30%.
-        if random.random() < 0.7:
-            chargeback.update_status(Chargeback.STATUS_RESOLVIDO_FAVOR_ESTABELECIMENTO)
-            self._log_cb_action("Bandeira", "Emissor", "Decisão de Chargeback", f"CB: {chargeback.id}, Resolução: Favorable ao Estabelecimento", "yellow")
-            self._log_cb_action("Emissor", "Portador", "Decisão de Chargeback", f"CB: {chargeback.id}, Resolução: Favorable ao Estab.", "red")
-            self._log(f"Chargeback {chargeback.id} RESOLVIDO a favor do ESTABELECIMENTO. Portador será cobrado novamente ou não receberá estorno inicial.", "green")
-        else:
-            chargeback.update_status(Chargeback.STATUS_RESOLVIDO_FAVOR_PORTADOR)
-            self._log_cb_action("Bandeira", "Emissor", "Decisão de Chargeback", f"CB: {chargeback.id}, Resolução: Favorable ao Portador", "yellow")
-            self._log_cb_action("Emissor", "Portador", "Decisão de Chargeback", f"CB: {chargeback.id}, Resolução: Favorable ao Portador.", "red")
-            self._log(f"Chargeback {chargeback.id} RESOLVIDO a favor do PORTADOR. Estabelecimento terá o valor estornado.", "red")
-
-        # O emissor recebe a decisão final da bandeira
-        emissor_obj.receber_reapresentacao_bandeira(chargeback) # Reusando o método para a notificação final
-
-        self.chargebacks_ativos.pop(chargeback.id, None) # Remove dos chargebacks ativos
-        self._log(f"\n----- FLUXO DE CHARGEBACK FINALIZADO PARA CB {chargeback.id} -----", "magenta")
-        logger.info(f"ChargebackProcessor: CB {chargeback.id} finalizado.")
+        self._log(
+            f"Chargeback {cb_id} RESOLVIDO a favor do {'ESTABELECIMENTO' if 'Estabelecimento' in resolucao else 'PORTADOR'}.",
+            "green" if 'Estabelecimento' in resolucao else "red",
+            {"description": f"Chargeback Resolvido ({'Estabelecimento' if 'Estabelecimento' in resolucao else 'Portador'})", "active_entities": ["client", "issuer", "store", "acquirer"], "flow_path": None}
+        )
+        time.sleep(0.1)
+        self._log(
+            f"----- FLUXO DE CHARGEBACK FINALIZADO PARA CB {cb_id} -----",
+            "magenta",
+            {"description": "Chargeback Concluído!", "active_entities": [], "flow_path": None}
+        )
+        time.sleep(0.5)
