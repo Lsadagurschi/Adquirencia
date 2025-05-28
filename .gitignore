@@ -1,0 +1,12 @@
+# Arquivos e diretórios gerados pelo Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Diretório de saída da simulação
+# Ignora tudo dentro de data/output
+data/output/*
+# Mas NÃO ignora o arquivo .gitkeep dentro dele, garantindo que o diretório seja rastreado
+!data/output/.gitkeep
